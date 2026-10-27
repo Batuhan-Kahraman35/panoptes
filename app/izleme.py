@@ -205,20 +205,35 @@ class Monitor:
             except Exception as e:  # tek şubenin hatası diğerlerini durdurmasın
                 log(f"{b['name']} kontrol hatası: {e!r}")
         stamp = time.strftime("%Y-%m-%d %H:%M")
+        offline = {k.split(":")[0] for k in found if k.endswith(":offline")}
+        if branches and len(offline) == len(branches):
+            # Hiçbir DVR'a ulaşılamıyor: sorun büyük ihtimalle mini PC'nin kendi ağında (örn. açılışta
+            # bağlantı henüz gelmemiş). Alarm üretme ve mevcut alarmları kapatma.
+            self.running = False
+            self.last_run = stamp
+            log("hiçbir DVR'a ulaşılamadı; yerel ağ sorunu varsayılıp kontrol atlandı")
+            return
         new, resolved = [], []
         with self.lock:
             ids = {b["id"] for b in branches}
             pending = {k: self.state["pending"].get(k, 0) + 1 for k in found}
             for key, text in found.items():
                 if key in self.state["active"]:
-                    self.state["active"][key]["text"] = text
+                    self.state["active"][key].update(text=text, missing=0)
                 elif pending[key] >= CONFIRM_RUNS:
-                    self.state["active"][key] = {"text": text, "since": stamp, "acked": False}
+                    self.state["active"][key] = {"text": text, "since": stamp, "acked": False, "missing": 0}
                     new.append(text)
             for key in list(self.state["active"]):
-                if key not in found:
-                    item = self.state["active"].pop(key)
-                    if key.split(":")[0] in ids:
+                if key in found:
+                    continue
+                bid = key.split(":")[0]
+                if bid in offline and not key.endswith(":offline"):
+                    continue  # erişilemeyen şubenin disk/kayıt/görüntü durumu bilinmiyor: alarm açık kalır
+                item = self.state["active"][key]
+                item["missing"] = item.get("missing", 0) + 1
+                if bid not in ids or item["missing"] >= CONFIRM_RUNS:
+                    del self.state["active"][key]
+                    if bid in ids:
                         resolved.append(item["text"])
             self.state["pending"] = {k: v for k, v in pending.items() if k not in self.state["active"]}
             for text in new:
