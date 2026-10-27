@@ -23,6 +23,7 @@ cp -r "$SRC/app" "$OPT/app"
 find "$OPT/app" -name __pycache__ -prune -exec rm -rf {} +
 install -m 755 "$SRC/kurulum/kiosk.sh" "$OPT/kiosk.sh"
 install -m 755 "$SRC/kurulum/panel-sifre.sh" "$OPT/panel-sifre.sh"
+install -m 755 "$SRC/kurulum/sertifika.sh" "$OPT/sertifika.sh"
 
 echo "[3/6] go2rtc"
 if [ ! -x "$OPT/go2rtc" ]; then
@@ -35,6 +36,7 @@ install -m 644 "$SRC/kurulum/dvr-ekran.service" "$SRC/kurulum/go2rtc.service" \
   "$SRC/kurulum/dvr-zamanlama.service" "$SRC/kurulum/dvr-zamanlama.timer" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now dvr-ekran.service go2rtc.service dvr-zamanlama.timer
+sh "$OPT/sertifika.sh" >/dev/null
 
 echo "[5/6] Kiosk: $KIOSK_USER için tty1 otomatik giriş"
 mkdir -p /etc/systemd/system/getty@tty1.service.d
@@ -60,5 +62,5 @@ systemctl set-default multi-user.target >/dev/null
 IP="$(hostname -I | cut -d' ' -f1)"
 echo
 echo "Kurulum tamam. Yeniden başlatınca ekran açılır."
-echo "Yönetim paneli: http://$IP:8765/"
+echo "Yönetim paneli: https://$IP/  (önce bilgisayara http://$IP:8765/ca.crt sertifikasını kurun)"
 echo "Panele şifre koymak için: sudo sh $OPT/panel-sifre.sh"

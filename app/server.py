@@ -8,16 +8,19 @@ Sadece Python standart kütüphanesini kullanır.
 """
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
 import secrets
+import ssl
 import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -31,12 +34,19 @@ CONFIG_FILE = DATA / "config.json"
 GO2RTC_YAML = DATA / "go2rtc.yaml"
 GO2RTC_API = os.environ.get("GO2RTC_API", "http://127.0.0.1:1984")
 PORT = int(os.environ.get("PORT", "8765"))
+HTTPS_PORT = int(os.environ.get("HTTPS_PORT", "443"))
+TLS_DIR = DATA / "tls"
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
 GRIDS = {"auto", "1x1", "2x2", "3x3", "4x4", "5x5"}
 STREAM_RE = re.compile(r"^b[0-9a-f]{6}_\d+(_main)?$")
-PUBLIC_PATHS = {"/display", "/api/display", "/api/version", "/api/alarms/active", "/static/display.js"}
+PUBLIC_PATHS = {"/display", "/api/display", "/api/version", "/api/alarms/active", "/static/display.js",
+                "/login", "/ca.crt"}
+SESSION_COOKIE = "oturum"
+SESSION_DAYS = 30
+LOGIN_MAX_FAILS = 5        # bu kadar hatalı denemeden sonra
+LOGIN_LOCK_SECONDS = 600   # IP bu süre boyunca giriş yapamaz
 CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                  ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png"}
 
@@ -552,20 +562,98 @@ ROUTES = [
 ]
 
 
+# ---------------------------------------------------------------- oturum
+
+_session_key = None
+_login_fails = {}  # ip -> hatalı deneme zamanları
+_login_lock = threading.Lock()
+
+
+def session_key():
+    global _session_key
+    if _session_key is None:
+        f = DATA / "session.key"
+        if not f.exists():
+            DATA.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(secrets.token_bytes(32))
+            f.chmod(0o600)
+        _session_key = f.read_bytes()
+    return _session_key
+
+
+def make_session(expires):
+    # Şifre imzaya dahil: şifre değişince eski oturumlar kendiliğinden geçersiz olur.
+    msg = f"{ADMIN_USER}:{expires}:{ADMIN_PASSWORD}".encode()
+    return f"{expires}.{hmac.new(session_key(), msg, hashlib.sha256).hexdigest()}"
+
+
+def session_valid(token):
+    expires = token.partition(".")[0]
+    if not expires.isdigit() or int(expires) < time.time():
+        return False
+    return hmac.compare_digest(token, make_session(int(expires)))
+
+
+def check_login(ip, user, password):
+    """(başarılı mı, hata kodu). Hatalı denemeler IP başına sınırlanır."""
+    now = time.time()
+    with _login_lock:
+        fails = [t for t in _login_fails.get(ip, []) if t > now - LOGIN_LOCK_SECONDS]
+        _login_fails[ip] = fails
+        if len(fails) >= LOGIN_MAX_FAILS:
+            return False, "kilitli"
+    ok = (secrets.compare_digest(user.encode(), ADMIN_USER.encode())
+          and secrets.compare_digest(password.encode(), ADMIN_PASSWORD.encode()))
+    if ok:
+        with _login_lock:
+            _login_fails.pop(ip, None)
+        return True, ""
+    time.sleep(1)
+    with _login_lock:
+        _login_fails.setdefault(ip, []).append(now)
+    return False, "hatali"
+
+
+def safe_next(target):
+    """Girişten sonra sadece bu sitedeki bir sayfaya dönülür (açık yönlendirme olmasın)."""
+    if target.startswith("/") and not target.startswith("//") and "\\" not in target:
+        return target
+    return "/"
+
+
 # ---------------------------------------------------------------- HTTP
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+    tls = False
+    redirect_https = False
+
+    def handle_error(self, request, client_address):
+        # Sertifikayı tanımayan tarayıcıların kopardığı bağlantılar günlüğü doldurmasın.
+        if isinstance(sys.exc_info()[1], (ssl.SSLError, ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "DVREkran/1.0"
+    timeout = 60
 
     def log_message(self, fmt, *args):
         pass
 
+    def _local(self):
+        return self.client_address[0] in ("127.0.0.1", "::1")
+
     def _authorized(self, path):
         if not ADMIN_PASSWORD or path in PUBLIC_PATHS:
             return True
-        if self.client_address[0] in ("127.0.0.1", "::1"):
+        if self._local():
             return True  # cihazın kendisi (kiosk, SSH ile bakım): oraya erişen zaten içeride
-        h = self.headers.get("Authorization", "")
+        morsel = SimpleCookie(self.headers.get("Cookie", "")).get(SESSION_COOKIE)
+        if morsel and session_valid(morsel.value):
+            return True
+        h = self.headers.get("Authorization", "")  # betikler için (curl -u)
         if not h.startswith("Basic "):
             return False
         try:
@@ -574,6 +662,39 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return (secrets.compare_digest(user.encode(), ADMIN_USER.encode())
                 and secrets.compare_digest(pw.encode(), ADMIN_PASSWORD.encode()))
+
+    def _redirect(self, location, status=HTTPStatus.SEE_OTHER, cookie=None):
+        extra = {"Location": location}
+        if cookie:
+            extra["Set-Cookie"] = cookie
+        self._send(status, b"", "text/plain; charset=utf-8", extra)
+
+    def _cookie(self, value, max_age):
+        secure = "; Secure" if self.server.tls else ""
+        return f"{SESSION_COOKIE}={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax{secure}"
+
+    def _login(self):
+        length = min(int(self.headers.get("Content-Length") or 0), 4096)
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+        get = lambda k: (form.get(k) or [""])[0]
+        nxt = safe_next(get("next"))
+        ok, err = check_login(self.client_address[0], get("username"), get("password"))
+        if not ok:
+            log("Hatalı giriş:", self.client_address[0])
+            return self._redirect("/login?" + urllib.parse.urlencode({"hata": err, "next": nxt}))
+        max_age = SESSION_DAYS * 86400
+        self._redirect(nxt, cookie=self._cookie(make_session(int(time.time()) + max_age), max_age))
+
+    def _https_redirect(self):
+        """Ağdan düz HTTP ile gelenleri HTTPS'e yönlendirir (kiosk localhost'tan geldiği için etkilenmez)."""
+        if not self.server.redirect_https or self._local() or self.path == "/ca.crt":
+            return False
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
+        if not re.fullmatch(r"[A-Za-z0-9.-]+", host):
+            return False
+        port = "" if HTTPS_PORT == 443 else f":{HTTPS_PORT}"
+        self._redirect(f"https://{host}{port}{self.path}", HTTPStatus.MOVED_PERMANENTLY)
+        return True
 
     def _send(self, status, body, ctype, extra=None):
         self.send_response(status)
@@ -596,9 +717,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle(self, method):
         path = urllib.parse.urlsplit(self.path).path
+        if self._https_redirect():
+            return
+        if method == "GET" and path == "/login":
+            return self._static("login.html")
+        if method == "POST" and path == "/login":
+            return self._login()
+        if method == "GET" and path == "/logout":
+            return self._redirect("/login", cookie=self._cookie("", 0))
+        if method == "GET" and path == "/ca.crt":
+            f = TLS_DIR / "ca.crt"
+            if not f.is_file():
+                return self._json(HTTPStatus.NOT_FOUND, {"error": "Sertifika yok"})
+            return self._send(HTTPStatus.OK, f.read_bytes(), "application/x-x509-ca-cert",
+                              {"Content-Disposition": 'attachment; filename="panoptes-ca.crt"'})
         if not self._authorized(path):
-            return self._send(HTTPStatus.UNAUTHORIZED, b"Yetkisiz", "text/plain; charset=utf-8",
-                              {"WWW-Authenticate": 'Basic realm="DVR Ekran"'})
+            if path.startswith("/api/"):
+                return self._json(HTTPStatus.UNAUTHORIZED, {"error": "Oturum açın"})
+            return self._redirect("/login?" + urllib.parse.urlencode({"next": path}))
         if method == "GET" and path == "/":
             return self._static("admin.html")
         if method == "GET" and path == "/display":
@@ -648,13 +784,24 @@ def main():
     request_sync()
     monitor.start()
     # Windows'ta SO_REUSEADDR başka programın portunu sessizce paylaşmaya izin veriyor.
-    ThreadingHTTPServer.allow_reuse_address = os.name != "nt"
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    Server.allow_reuse_address = os.name != "nt"
+    server = Server(("0.0.0.0", PORT), Handler)
+    crt, key = TLS_DIR / "server.crt", TLS_DIR / "server.key"
+    if crt.is_file() and key.is_file():
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(crt, key)
+        https = Server(("0.0.0.0", HTTPS_PORT), Handler)
+        # El sıkışma ilk okumada, istek iş parçacığında yapılır; yavaş bir istemci accept'i kilitlemez.
+        https.socket = ctx.wrap_socket(https.socket, server_side=True, do_handshake_on_connect=False)
+        https.tls = True
+        server.redirect_https = True
+        threading.Thread(target=https.serve_forever, daemon=True).start()
+        log(f"HTTPS açık, port {HTTPS_PORT}")
     log(f"Yönetim paneli: http://localhost:{PORT}/   Ekran: http://localhost:{PORT}/display")
     if not ADMIN_PASSWORD:
         log("UYARI: ADMIN_PASSWORD tanımlı değil, panel şifresiz.")
     server.serve_forever()
-
 
 if __name__ == "__main__":
     main()

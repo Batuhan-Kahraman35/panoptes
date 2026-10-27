@@ -14,6 +14,11 @@ async function api(method, url, body) {
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401) {
+    // oturum süresi doldu ya da şifre değişti
+    location.href = "/login?next=" + encodeURIComponent(location.pathname);
+    throw new Error("Oturum açın");
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;

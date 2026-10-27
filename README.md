@@ -36,6 +36,8 @@ DVR went offline or a disk died until footage was actually needed.
   to H.264 over ISAPI (main stream / recording untouched).
 - **Working hours** — the box powers itself off after hours and programs the RTC alarm to wake up just before opening
   time. Combined with *power on after AC loss*, it needs no one on site.
+- **HTTPS admin panel with login** — local CA, form login with signed session cookies and lockout; the kiosk stays on
+  localhost.
 - **Evidence export** — tools to search and download original recordings, cut a time range to MP4 and produce a SHA-256
   manifest, used for a real police footage request.
 
@@ -114,10 +116,17 @@ sudo sh kurulum/install.sh <kiosk-user>
 sudo reboot
 ```
 
-Then open `http://<device-ip>:8765/`, add your DVRs and build a list. To protect the panel, run
-`sudo sh /opt/dvr-ekran/panel-sifre.sh` on the device (requests from the device itself stay password-free, so the
-kiosk keeps working). For updates from a workstation:
-`sh kurulum/guncelle.sh user@device`.
+The installer creates a small local certificate authority and serves the panel over HTTPS. Download
+`http://<device-ip>:8765/ca.crt` once and add it to the workstation's trusted root certificates, then open
+`https://<device-ip>/`, add your DVRs and build a list.
+
+Set the panel login with `sudo sh /opt/dvr-ekran/panel-sifre.sh` on the device. The panel uses a regular login form
+(so browsers offer to save the password) with signed 30-day session cookies; changing the password invalidates every
+session, and repeated failures lock the client out for ten minutes. Requests from the device itself stay
+password-free over plain HTTP, so the kiosk keeps working. Re-run `sudo sh /opt/dvr-ekran/sertifika.sh` when the
+device's IP changes or Tailscale is added — the CA stays the same, so nothing changes on the workstation.
+
+For updates from a workstation: `sh kurulum/guncelle.sh user@device`.
 
 ### Repository layout
 
@@ -172,7 +181,8 @@ sudo sh kurulum/install.sh <kiosk-kullanıcısı>
 sudo reboot
 ```
 
-Panel: `http://<cihaz-ip>:8765/`
+Bilgisayara bir kez `http://<cihaz-ip>:8765/ca.crt` sertifikasını "Güvenilen Kök Sertifika Yetkilileri" deposuna
+kurun, sonra panel: `https://<cihaz-ip>/`. Panel şifresi: cihazda `sudo sh /opt/dvr-ekran/panel-sifre.sh`.
 
 ---
 

@@ -5,7 +5,9 @@ Wants=network-online.target
 
 [Service]
 User=dvr
-Environment=DVR_DATA=/var/lib/dvr-ekran PORT=8765 GO2RTC_API=http://127.0.0.1:1984 PYTHONUNBUFFERED=1
+# HTTPS için 443'ü root olmadan dinleyebilsin
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Environment=DVR_DATA=/var/lib/dvr-ekran PORT=8765 HTTPS_PORT=443 GO2RTC_API=http://127.0.0.1:1984 PYTHONUNBUFFERED=1
 EnvironmentFile=-/etc/dvr-ekran.env
 ExecStart=/usr/bin/python3 /opt/dvr-ekran/app/server.py
 Restart=always
