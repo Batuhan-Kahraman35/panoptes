@@ -1,0 +1,9 @@
+[Unit]
+Description=DVR Ekran calisma saatleri kontrolu (dakikada bir)
+
+[Timer]
+OnCalendar=*:*:00
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

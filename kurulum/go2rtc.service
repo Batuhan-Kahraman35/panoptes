@@ -1,0 +1,16 @@
+[Unit]
+Description=go2rtc (DVR RTSP akislari)
+After=network-online.target dvr-ekran.service
+Wants=network-online.target
+
+[Service]
+User=dvr
+WorkingDirectory=/var/lib/dvr-ekran
+# go2rtc.yaml dosyasini panel yazar; panel ilk acilista olusturana kadar bekle
+ExecStartPre=/bin/sh -c "until [ -f /var/lib/dvr-ekran/go2rtc.yaml ]; do sleep 1; done"
+ExecStart=/opt/dvr-ekran/go2rtc -config /var/lib/dvr-ekran/go2rtc.yaml
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+# Beyaz liste: sadece aşağıda açıkça izin verilenler repoya girer.
+# (Klasörde cihaz yedekleri, kayıt görüntüleri ve iç ağ bilgileri de duruyor.)
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/LICENSE
+!/app/
+!/kurulum/
+!/araclar/
+!/docs/
+
+__pycache__/
+*.pyc
+data/

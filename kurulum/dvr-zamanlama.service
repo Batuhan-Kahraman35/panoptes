@@ -1,0 +1,6 @@
+[Unit]
+Description=DVR Ekran calisma saatleri kontrolu (mesai disinda kapat)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/dvr-ekran/app/zamanlama.py
