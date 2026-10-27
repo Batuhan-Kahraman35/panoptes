@@ -18,6 +18,8 @@
   #hud { position: absolute; top: 6px; right: 8px; z-index: 10; padding: 2px 8px; background: rgba(0,0,0,.55); border-radius: 4px; font-size: 12px; }
   #alarms { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; background: rgba(160, 20, 20, .92); color: #fff; font-size: 15px; padding: 6px 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #alarms b { margin-right: 10px; }
+  #logo { position: absolute; right: 16px; bottom: 16px; z-index: 15; pointer-events: none; object-fit: contain; max-width: 30vw; transition: bottom .3s; }
+  body.alarm #logo { bottom: 44px; }
   #msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #aaa; text-align: center; padding: 20px; }
 </style>
 </head>
@@ -25,6 +27,7 @@
 <div id="msg">Yükleniyor…</div>
 <div id="hud" hidden></div>
 <div id="alarms" hidden></div>
+<img id="logo" alt="" hidden>
 <script src="/static/display.js"></script>
 </body>
 </html>

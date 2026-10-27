@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DVR Ekran Yönetimi</title>
+<link rel="icon" id="favicon" href="data:,">
 <style>
   :root {
     --bg: #f4f5f7; --panel: #fff; --text: #1d2330; --muted: #6b7385; --line: #e2e5eb;
@@ -21,6 +22,12 @@
   body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
   header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   header h1 { font-size: 17px; margin: 0; }
+  #brand-logo { height: 32px; max-width: 140px; object-fit: contain; }
+  .logo-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .logo-preview { width: 160px; height: 90px; display: grid; place-items: center; border-radius: 8px; border: 1px dashed var(--line);
+                  background: repeating-conic-gradient(var(--line) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+  .logo-preview img { max-width: 90%; max-height: 80%; object-fit: contain; }
+  input[type=range] { padding: 0; }
   nav { display: flex; gap: 4px; }
   nav button { background: none; border: 0; padding: 8px 12px; border-radius: 6px; color: var(--muted); font: inherit; cursor: pointer; }
   nav button.active { background: var(--chip); color: var(--text); font-weight: 600; }
@@ -106,6 +113,7 @@
 </head>
 <body>
 <header>
+  <img id="brand-logo" alt="" hidden>
   <h1>DVR Ekran Yönetimi</h1>
   <nav>
     <button data-tab="branches" class="active">Şubeler</button>
@@ -185,6 +193,23 @@
         <button class="primary" id="btn-save-settings">Kaydet</button>
       </div>
       <p class="muted">Ekran adresi (mini PC üzerinde): <code>http://localhost:8765/display</code></p>
+    </div>
+    <div class="section" style="margin-top:16px">
+      <h2 style="margin-bottom:12px">Logo</h2>
+      <div class="logo-row">
+        <div class="logo-preview"><img id="logo-preview" alt="" hidden><span class="muted" id="logo-none">Logo yok</span></div>
+        <div>
+          <input type="file" id="logo-file" accept="image/png,image/jpeg,image/webp" hidden>
+          <button id="btn-logo-upload">Logo yükle</button>
+          <button class="danger" id="btn-logo-delete" hidden>Kaldır</button>
+          <p class="muted" style="margin:8px 0 0">Şeffaf arka planlı PNG önerilir (en fazla 2 MB).<br>Panel başlığında, tarayıcı sekmesinde ve ekranın sağ altında görünür.</p>
+        </div>
+      </div>
+      <div class="inline">
+        <label class="field"><span>Ekranda saydamlık: <b id="logo-opacity-val"></b></span><input type="range" min="10" max="100" step="5" id="logo-opacity"></label>
+        <label class="field"><span>Ekranda boyut: <b id="logo-size-val"></b></span><input type="range" min="3" max="30" id="logo-size"></label>
+        <button class="primary" id="btn-save-logo">Kaydet</button>
+      </div>
     </div>
     <div class="section" style="margin-top:16px">
       <h2 style="margin-bottom:12px">Çalışma saatleri</h2>

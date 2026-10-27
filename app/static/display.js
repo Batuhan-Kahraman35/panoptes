@@ -213,7 +213,18 @@ function cycle() {
   }, ms - preload));
 }
 
+// Logo: sağ altta, ayarlardaki saydamlık ve boyutla (boyut = ekran yüksekliğinin yüzdesi).
+function showLogo(logo) {
+  const img = document.getElementById("logo");
+  img.hidden = !logo;
+  if (!logo) return;
+  if (img.getAttribute("src") !== logo.url) img.src = logo.url;
+  img.style.opacity = logo.opacity / 100;
+  img.style.height = `${logo.size}vh`;
+}
+
 function start() {
+  showLogo(cfg.logo);
   timers.forEach(clearTimeout);
   timers = [];
   document.querySelectorAll(".screen").forEach(destroyScreen);
@@ -259,6 +270,7 @@ async function pollAlarms() {
   try {
     const { alarms } = await (await fetch("/api/alarms/active", { cache: "no-store" })).json();
     el.hidden = !alarms.length;
+    document.body.classList.toggle("alarm", alarms.length > 0);
     el.innerHTML = alarms.length ? `<b>⚠ ${alarms.length} ALARM</b>` + alarms.map((a) => a.replace(/[&<>]/g, "")).join("  ·  ") : "";
   } catch {
     // sunucuya ulaşılamazsa son durum kalır

@@ -50,6 +50,26 @@ function renderSettings() {
   $("#sch-off").value = sch.off;
   $("#sch-days").innerHTML = DAYS.map((d, i) =>
     `<label class="chip"><input type="checkbox" value="${i}" ${sch.days.includes(i) ? "checked" : ""}> ${d}</label>`).join("");
+  renderLogo(s.logo || { version: 0, opacity: 50, size: 10 });
+}
+
+function renderLogo(logo) {
+  const url = logo.version ? `/logo?v=${logo.version}` : "";
+  for (const img of [$("#brand-logo"), $("#logo-preview")]) {
+    img.hidden = !url;
+    if (url) img.src = url;
+  }
+  $("#logo-none").hidden = !!url;
+  $("#btn-logo-delete").hidden = !url;
+  $("#favicon").href = url || "data:,";
+  $("#logo-opacity").value = logo.opacity;
+  $("#logo-size").value = logo.size;
+  showLogoValues();
+}
+
+function showLogoValues() {
+  $("#logo-opacity-val").textContent = `%${$("#logo-opacity").value}`;
+  $("#logo-size-val").textContent = `ekran yüksekliğinin %${$("#logo-size").value}'i`;
 }
 
 // Silme gibi işlemlerde tarayıcı confirm() yerine iki tıklamalı onay.
@@ -564,6 +584,43 @@ async function saveSettings() {
 }
 
 $("#btn-save-settings").addEventListener("click", saveSettings);
+
+$("#logo-opacity").addEventListener("input", showLogoValues);
+$("#logo-size").addEventListener("input", showLogoValues);
+$("#btn-logo-upload").addEventListener("click", () => $("#logo-file").click());
+$("#logo-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    // dosya ham olarak gönderilir; sunucu türünü içeriğinden doğrular
+    const res = await fetch("/api/logo", { method: "POST", headers: { "Content-Type": file.type }, body: file });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    toast("Logo yüklendi");
+    refresh();
+  } catch (err) {
+    toast(err.message);
+  }
+});
+$("#btn-logo-delete").addEventListener("click", (e) => confirmClick(e.target, async () => {
+  try {
+    await api("DELETE", "/api/logo");
+    toast("Logo kaldırıldı");
+    refresh();
+  } catch (err) {
+    toast(err.message);
+  }
+}));
+$("#btn-save-logo").addEventListener("click", async () => {
+  try {
+    await api("PUT", "/api/settings", { logo: { opacity: Number($("#logo-opacity").value), size: Number($("#logo-size").value) } });
+    toast("Logo ayarları kaydedildi");
+    refresh();
+  } catch (err) {
+    toast(err.message);
+  }
+});
 $("#btn-save-schedule").addEventListener("click", saveSettings);
 
 // ------------------------------------------------------------------ alarmlar

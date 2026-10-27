@@ -9,6 +9,7 @@ Sadece Python standart kütüphanesini kullanır.
 import base64
 import hashlib
 import hmac
+import io
 import json
 import os
 import re
@@ -36,13 +37,16 @@ GO2RTC_API = os.environ.get("GO2RTC_API", "http://127.0.0.1:1984")
 PORT = int(os.environ.get("PORT", "8765"))
 HTTPS_PORT = int(os.environ.get("HTTPS_PORT", "443"))
 TLS_DIR = DATA / "tls"
+LOGO_FILE = DATA / "logo.img"
+LOGO_MAX_BYTES = 2 * 1024 * 1024
+LOGO_MAX_PX = 600
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
 GRIDS = {"auto", "1x1", "2x2", "3x3", "4x4", "5x5"}
 STREAM_RE = re.compile(r"^b[0-9a-f]{6}_\d+(_main)?$")
 PUBLIC_PATHS = {"/display", "/api/display", "/api/version", "/api/alarms/active", "/static/display.js",
-                "/login", "/ca.crt"}
+                "/login", "/ca.crt", "/logo"}
 SESSION_COOKIE = "oturum"
 SESSION_DAYS = 30
 LOGIN_MAX_FAILS = 5        # bu kadar hatalı denemeden sonra
@@ -54,6 +58,8 @@ DEFAULT_SETTINGS = {
     "rotate_seconds": 30, "go2rtc_port": 1984, "go2rtc_listen": "127.0.0.1",
     # Çalışma saatleri (zamanlama.py uygular); days: 0=Pzt .. 6=Paz
     "schedule": {"enabled": False, "days": [0, 1, 2, 3, 4, 5], "on": "08:30", "off": "19:30"},
+    # version 0 = logo yok; opacity yüzde, size ekran yüksekliğinin yüzdesi
+    "logo": {"version": 0, "type": "", "opacity": 50, "size": 10},
 }
 
 
@@ -296,7 +302,10 @@ def display_payload():
                 tiles.append({"stream": f"{b['id']}_{ch['no']}{suffix}", "label": f"{b['name']} · {ch['name']}"})
             if any(tiles):
                 lists.append({"name": lst["name"], "grid": lst.get("grid", "auto"), "tiles": tiles})
-        payload = {"rotate_seconds": s["rotate_seconds"], "go2rtc_port": s["go2rtc_port"], "lists": lists}
+        logo = s["logo"]
+        payload = {"rotate_seconds": s["rotate_seconds"], "go2rtc_port": s["go2rtc_port"], "lists": lists,
+                   "logo": {"url": f"/logo?v={logo['version']}", "opacity": logo["opacity"], "size": logo["size"]}
+                   if logo["version"] else None}
     payload["hash"] = hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:12]
     return payload
 
@@ -471,7 +480,62 @@ def api_settings(body):
             raise ApiError("Dönüş süresi 5-3600 saniye arasında olmalı")
         if "schedule" in body:
             s["schedule"] = validate_schedule(body["schedule"])
+        if "logo" in body:
+            try:
+                opacity, size = int(body["logo"]["opacity"]), int(body["logo"]["size"])
+            except (TypeError, ValueError, KeyError):
+                raise ApiError("Logo ayarları geçersiz")
+            if not (10 <= opacity <= 100 and 3 <= size <= 30):
+                raise ApiError("Saydamlık %10-100, boyut %3-30 arasında olmalı")
+            s["logo"] = {**s["logo"], "opacity": opacity, "size": size}
         s["rotate_seconds"] = rotate
+        store.save()
+        return s
+
+
+def image_type(data):
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def api_upload_logo(data):
+    if len(data) > LOGO_MAX_BYTES:
+        raise ApiError("Logo en fazla 2 MB olabilir")
+    ctype = image_type(data)
+    if not ctype:
+        raise ApiError("PNG, JPEG veya WebP yükleyin (şeffaf logo için PNG)")
+    try:
+        from PIL import Image
+    except ImportError:
+        Image = None  # Pillow yoksa dosya olduğu gibi saklanır
+    if Image:
+        try:
+            im = Image.open(io.BytesIO(data))
+            im.thumbnail((LOGO_MAX_PX, LOGO_MAX_PX))
+            out = io.BytesIO()
+            im.convert("RGBA").save(out, "PNG", optimize=True)
+        except Exception:
+            raise ApiError("Görsel okunamadı")
+        data, ctype = out.getvalue(), "image/png"
+    with store.lock:
+        LOGO_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LOGO_FILE.write_bytes(data)
+        s = store.data["settings"]
+        s["logo"] = {**s["logo"], "type": ctype, "version": int(time.time())}
+        store.save()
+        return s
+
+
+def api_delete_logo():
+    with store.lock:
+        LOGO_FILE.unlink(missing_ok=True)
+        s = store.data["settings"]
+        s["logo"] = {**s["logo"], "type": "", "version": 0}
         store.save()
         return s
 
@@ -559,6 +623,7 @@ ROUTES = [
     ("DELETE", r"/api/lists/(l\w+)", lambda m, b: api_delete_list(m[1])),
     ("POST", r"/api/lists/(l\w+)/move", lambda m, b: api_move_list(m[1], b)),
     ("PUT", r"/api/settings", lambda m, b: api_settings(b)),
+    ("DELETE", r"/api/logo", lambda m, b: api_delete_logo()),
 ]
 
 
@@ -731,10 +796,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(HTTPStatus.NOT_FOUND, {"error": "Sertifika yok"})
             return self._send(HTTPStatus.OK, f.read_bytes(), "application/x-x509-ca-cert",
                               {"Content-Disposition": 'attachment; filename="panoptes-ca.crt"'})
+        if method == "GET" and path == "/logo":
+            with store.lock:
+                ctype = store.data["settings"]["logo"]["type"]
+            if not ctype or not LOGO_FILE.is_file():
+                return self._json(HTTPStatus.NOT_FOUND, {"error": "Logo yok"})
+            return self._send(HTTPStatus.OK, LOGO_FILE.read_bytes(), ctype)
         if not self._authorized(path):
             if path.startswith("/api/"):
                 return self._json(HTTPStatus.UNAUTHORIZED, {"error": "Oturum açın"})
             return self._redirect("/login?" + urllib.parse.urlencode({"next": path}))
+        if method == "POST" and path == "/api/logo":
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > LOGO_MAX_BYTES:
+                return self._json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "Logo en fazla 2 MB olabilir"})
+            try:
+                return self._json(HTTPStatus.OK, api_upload_logo(self.rfile.read(length)))
+            except ApiError as e:
+                return self._json(e.status, {"error": str(e)})
         if method == "GET" and path == "/":
             return self._static("admin.html")
         if method == "GET" and path == "/display":

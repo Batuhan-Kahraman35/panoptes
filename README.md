@@ -36,6 +36,8 @@ DVR went offline or a disk died until footage was actually needed.
   to H.264 over ISAPI (main stream / recording untouched).
 - **Working hours** — the box powers itself off after hours and programs the RTC alarm to wake up just before opening
   time. Combined with *power on after AC loss*, it needs no one on site.
+- **Branding** — upload a logo in settings; it shows in the panel header, as the browser tab icon, on the login page and
+  semi-transparent in the corner of the wall (opacity and size adjustable).
 - **HTTPS admin panel with login** — local CA, form login with signed session cookies and lockout; the kiosk stays on
   localhost.
 - **Evidence export** — tools to search and download original recordings, cut a time range to MP4 and produce a SHA-256

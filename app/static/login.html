@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Giriş · DVR Ekran</title>
+<link rel="icon" href="/logo">
 <style>
   :root {
     --bg: #f4f5f7; --panel: #fff; --text: #1d2330; --muted: #6b7385; --line: #e2e5eb;
@@ -20,6 +21,7 @@
          font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
   form { width: 100%; max-width: 340px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 24px; }
   h1 { font-size: 18px; margin: 0 0 4px; }
+  .logo { display: block; max-height: 64px; max-width: 200px; margin: 0 auto 16px; object-fit: contain; }
   p.muted { color: var(--muted); margin: 0 0 20px; }
   label { display: block; margin-bottom: 14px; }
   label span { display: block; margin-bottom: 4px; color: var(--muted); }
@@ -31,6 +33,7 @@
 </head>
 <body>
 <form method="post" action="/login">
+  <img class="logo" src="/logo" alt="" onerror="this.remove()">
   <h1>DVR Ekran Yönetimi</h1>
   <p class="muted">Devam etmek için giriş yapın.</p>
   <div class="error" id="error" hidden></div>
