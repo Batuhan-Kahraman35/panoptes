@@ -114,8 +114,9 @@ sudo sh kurulum/install.sh <kiosk-user>
 sudo reboot
 ```
 
-Then open `http://<device-ip>:8765/`, add your DVRs and build a list. To protect the panel, put
-`ADMIN_PASSWORD=...` in `/etc/dvr-ekran.env` and restart `dvr-ekran`. For updates from a workstation:
+Then open `http://<device-ip>:8765/`, add your DVRs and build a list. To protect the panel, run
+`sudo sh /opt/dvr-ekran/panel-sifre.sh` on the device (requests from the device itself stay password-free, so the
+kiosk keeps working). For updates from a workstation:
 `sh kurulum/guncelle.sh user@device`.
 
 ### Repository layout

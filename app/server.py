@@ -563,6 +563,8 @@ class Handler(BaseHTTPRequestHandler):
     def _authorized(self, path):
         if not ADMIN_PASSWORD or path in PUBLIC_PATHS:
             return True
+        if self.client_address[0] in ("127.0.0.1", "::1"):
+            return True  # cihazın kendisi (kiosk, SSH ile bakım): oraya erişen zaten içeride
         h = self.headers.get("Authorization", "")
         if not h.startswith("Basic "):
             return False

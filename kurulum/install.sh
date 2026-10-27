@@ -22,6 +22,7 @@ rm -rf "$OPT/app"
 cp -r "$SRC/app" "$OPT/app"
 find "$OPT/app" -name __pycache__ -prune -exec rm -rf {} +
 install -m 755 "$SRC/kurulum/kiosk.sh" "$OPT/kiosk.sh"
+install -m 755 "$SRC/kurulum/panel-sifre.sh" "$OPT/panel-sifre.sh"
 
 echo "[3/6] go2rtc"
 if [ ! -x "$OPT/go2rtc" ]; then
@@ -60,4 +61,4 @@ IP="$(hostname -I | cut -d' ' -f1)"
 echo
 echo "Kurulum tamam. Yeniden başlatınca ekran açılır."
 echo "Yönetim paneli: http://$IP:8765/"
-echo "Panel şifresi için: /etc/dvr-ekran.env içine ADMIN_PASSWORD=... yazıp 'systemctl restart dvr-ekran'"
+echo "Panele şifre koymak için: sudo sh $OPT/panel-sifre.sh"
