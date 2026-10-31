@@ -177,10 +177,16 @@ class Monitor:
             return {"active": active, "history": self.state["history"][:100],
                     "last_run": self.last_run, "running": self.running}
 
-    def ack(self, key):
+    def ack(self, key, acked=True):
+        """Alarmı 'görüldü' yapar ya da geri alır. Görüldü işareti yalnızca o gün geçerlidir."""
         with self.lock:
             if key in self.state["active"]:
-                self.state["active"][key]["acked"] = True
+                item = self.state["active"][key]
+                item["acked"] = acked
+                if acked:
+                    item["acked_on"] = time.strftime("%Y-%m-%d")
+                else:
+                    item.pop("acked_on", None)
                 self._save()
 
     def drop(self, prefix, note):
@@ -214,7 +220,13 @@ class Monitor:
             log("hiçbir DVR'a ulaşılamadı; yerel ağ sorunu varsayılıp kontrol atlandı")
             return
         new, resolved = [], []
+        today = stamp[:10]
         with self.lock:
+            # Önceki günlerde 'görüldü' denmiş ama hâlâ süren alarmlar yeniden onaylanmamış olur.
+            for item in self.state["active"].values():
+                if item.get("acked") and item.get("acked_on") != today:
+                    item["acked"] = False
+                    item.pop("acked_on", None)
             ids = {b["id"] for b in branches}
             pending = {k: self.state["pending"].get(k, 0) + 1 for k in found}
             for key, text in found.items():

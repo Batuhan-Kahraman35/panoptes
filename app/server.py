@@ -653,7 +653,7 @@ def api_check_now():
 
 
 def api_ack(body):
-    monitor.ack(str(body.get("key", "")))
+    monitor.ack(str(body.get("key", "")), body.get("acked", True) is not False)
     return api_alarms()
 
 

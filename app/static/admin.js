@@ -637,7 +637,9 @@ async function loadAlarms(fillForm) {
         <span class="badge ${x.acked ? "" : "bad"}">${x.acked ? "Görüldü" : "Alarm"}</span>
         <span>${esc(x.text)}</span><span class="spacer"></span>
         <span class="muted">${esc(x.since)}'den beri</span>
-        ${x.acked ? "" : `<button class="small" data-ack="${esc(x.key)}">Gördüm</button>`}
+        ${x.acked
+          ? `<button class="small" data-unack="${esc(x.key)}">Geri al</button>`
+          : `<button class="small" data-ack="${esc(x.key)}">Gördüm</button>`}
       </div></div>`).join("")
     : `<div class="empty">Açık alarm yok.</div>`;
   $("#alarm-history").innerHTML = a.history.map((h) =>
@@ -660,9 +662,9 @@ async function loadAlarms(fillForm) {
 }
 
 $("#alarm-active").addEventListener("click", async (e) => {
-  const key = e.target.dataset.ack;
-  if (!key) return;
-  await api("POST", "/api/alarms/ack", { key });
+  const { ack, unack } = e.target.dataset;
+  if (!ack && !unack) return;
+  await api("POST", "/api/alarms/ack", { key: ack || unack, acked: !unack });
   loadAlarms(false);
 });
 
