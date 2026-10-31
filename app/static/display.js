@@ -62,7 +62,12 @@ class Player {
     this.video.src = URL.createObjectURL(ms);
     ms.addEventListener("sourceopen", () => {
       URL.revokeObjectURL(this.video.src);
-      const ws = (this.ws = new WebSocket(`ws://${location.hostname}:${cfg.go2rtc_port}/api/ws?src=${encodeURIComponent(this.stream)}`));
+      // Kiosk go2rtc'ye doğrudan bağlanır; ağdaki tarayıcılar panel adresindeki aktarıcıyı (/api/ws) kullanır.
+      const local = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+      const base = local
+        ? `ws://${location.hostname}:${cfg.go2rtc_port}`
+        : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+      const ws = (this.ws = new WebSocket(`${base}/api/ws?src=${encodeURIComponent(this.stream)}`));
       ws.binaryType = "arraybuffer";
       let sb = null;
       const queue = [];

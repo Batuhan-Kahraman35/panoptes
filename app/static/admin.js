@@ -86,8 +86,9 @@ function confirmClick(btn, action) {
 document.querySelectorAll("nav button").forEach((b) =>
   b.addEventListener("click", () => {
     document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("active", x === b));
-    for (const id of ["branches", "lists", "alarms", "settings"]) $(`#tab-${id}`).hidden = id !== b.dataset.tab;
+    for (const id of ["branches", "lists", "recordings", "alarms", "settings"]) $(`#tab-${id}`).hidden = id !== b.dataset.tab;
     if (b.dataset.tab === "alarms") loadAlarms(true);
+    if (b.dataset.tab === "recordings") openRecordings();
   })
 );
 

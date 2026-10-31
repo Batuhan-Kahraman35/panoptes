@@ -7,6 +7,7 @@
 Sadece Python standart kütüphanesini kullanır.
 """
 import base64
+import datetime as dt
 import hashlib
 import hmac
 import io
@@ -14,6 +15,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import ssl
 import sys
 import threading
@@ -27,6 +29,7 @@ from pathlib import Path
 
 import isapi
 import izleme
+import kayit
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -106,6 +109,7 @@ class Store:
 
 store = Store(CONFIG_FILE)
 monitor = izleme.Monitor(store, DATA)
+exports = None  # kayit.Exports, main() içinde kurulur
 isapi_clients = {}
 
 
@@ -243,22 +247,37 @@ def sync_go2rtc():
     except Exception as e:
         log("go2rtc'ye ulaşılamadı:", e)
         return
+    global last_go2rtc_restart
     q = urllib.parse.quote
     for name in current:
         if STREAM_RE.match(name) and name not in streams:
             go2rtc_call("DELETE", f"/api/streams?src={q(name)}")
+    needs_restart = []
     for name, src in streams.items():
         producers = (current.get(name) or {}).get("producers") or []
-        if any(p.get("url") == src for p in producers):
+        # Boştaki akış kaynağı "url", izlenen akış "source" alanında döner.
+        if any(src in (p.get("url"), p.get("source")) for p in producers):
+            continue
+        # go2rtc exec: kaynaklarını API ile kabul etmez (400); yalnızca yaml'dan, açılışta okur.
+        if src.startswith("exec:"):
+            needs_restart.append(name)
             continue
         method = "PATCH" if name in current else "PUT"
         try:
             go2rtc_call(method, f"/api/streams?name={q(name)}&src={q(src, safe='')}")
         except Exception as e:
             log(f"go2rtc {method} {name} başarısız:", e)
+    if needs_restart and time.time() - last_go2rtc_restart > 300:
+        last_go2rtc_restart = time.time()
+        log("go2rtc yeni şifreli akışlar için yeniden başlatılıyor:", ", ".join(sorted(needs_restart)))
+        try:
+            go2rtc_call("POST", "/api/restart")
+        except Exception as e:
+            log("go2rtc yeniden başlatılamadı:", e)
 
 
 sync_event = threading.Event()
+last_go2rtc_restart = 0.0
 
 
 def sync_worker():
@@ -412,6 +431,43 @@ def api_snapshot(bid, no):
         return client_for(b).snapshot(no)
     except isapi.IsapiError as e:
         raise ApiError(str(e), HTTPStatus.BAD_GATEWAY)
+
+
+def parse_time(text, what):
+    try:
+        return dt.datetime.fromisoformat(str(text)).replace(microsecond=0, tzinfo=None)
+    except ValueError:
+        raise ApiError(f"{what} geçersiz")
+
+
+def api_recordings(bid, no, query):
+    with store.lock:
+        b = dict(store.branch(bid))
+    try:
+        day = dt.date.fromisoformat(query.get("date", ""))
+    except ValueError:
+        raise ApiError("Tarih geçersiz")
+    start = dt.datetime.combine(day, dt.time())
+    try:
+        spans = kayit.search(b, no, start, start + dt.timedelta(days=1))
+    except kayit.KayitError as e:
+        raise ApiError(str(e), HTTPStatus.BAD_GATEWAY)
+    return {"date": day.isoformat(), "spans": [[s.isoformat(), e.isoformat()] for s, e in spans]}
+
+
+def api_create_export(body):
+    with store.lock:
+        b = dict(store.branch(str(body.get("branch", ""))))
+    try:
+        return exports.start(b, int(body.get("channel", 0)), parse_time(body.get("start"), "Başlangıç"),
+                             parse_time(body.get("end"), "Bitiş"), body.get("format", "h264"))
+    except kayit.KayitError as e:
+        raise ApiError(str(e))
+
+
+def api_delete_export(job_id):
+    exports.delete(job_id)
+    return {"ok": True}
 
 
 def api_create_list(body):
@@ -624,6 +680,10 @@ ROUTES = [
     ("POST", r"/api/lists/(l\w+)/move", lambda m, b: api_move_list(m[1], b)),
     ("PUT", r"/api/settings", lambda m, b: api_settings(b)),
     ("DELETE", r"/api/logo", lambda m, b: api_delete_logo()),
+    ("GET", r"/api/recordings/(b\w+)/(\d+)", lambda m, b: api_recordings(m[1], int(m[2]), b)),
+    ("GET", r"/api/exports", lambda m, b: {"jobs": exports.list()}),
+    ("POST", r"/api/exports", lambda m, b: api_create_export(b)),
+    ("DELETE", r"/api/exports/(\w+)", lambda m, b: api_delete_export(m[1])),
 ]
 
 
@@ -750,6 +810,100 @@ class Handler(BaseHTTPRequestHandler):
         max_age = SESSION_DAYS * 86400
         self._redirect(nxt, cookie=self._cookie(make_session(int(time.time()) + max_age), max_age))
 
+    def _playback(self, bid, no):
+        query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query))
+        try:
+            with store.lock:
+                b = dict(store.branch(bid))
+            start = parse_time(query.get("start"), "Başlangıç")
+            speed = int(query.get("speed", 1))
+        except (ApiError, ValueError) as e:
+            return self._json(HTTPStatus.BAD_REQUEST, {"error": str(e) or "Geçersiz istek"})
+
+        class Lazy:
+            """Başlıklar ilk görüntü verisi gelince gönderilir; o ana kadar oluşan hata JSON olarak döner."""
+            started = False
+
+            def write(inner, data):
+                if not inner.started:
+                    inner.started = True
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "video/mp4")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                self.wfile.write(data)
+
+            def flush(inner):
+                self.wfile.flush()
+
+        out = Lazy()
+        try:
+            kayit.playback(b, no, start, speed, out)
+        except kayit.KayitError as e:
+            if not out.started:
+                return self._json(HTTPStatus.CONFLICT, {"error": str(e)})
+        if not out.started:
+            self._json(HTTPStatus.NOT_FOUND, {"error": "Bu saatte görüntü gelmedi"})
+        self.close_connection = True
+
+    def _export_file(self, job_id):
+        try:
+            path, name = exports.file(job_id)
+            size = path.stat().st_size
+        except (kayit.KayitError, OSError) as e:
+            return self._json(HTTPStatus.NOT_FOUND, {"error": str(e)})
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.end_headers()
+        try:
+            with open(path, "rb") as f:
+                while chunk := f.read(1 << 20):
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionError):
+            pass
+
+    def _ws_proxy(self):
+        """go2rtc yalnızca 127.0.0.1'de dinler; ağdaki tarayıcının ekran akışını panel adresi (wss) üzerinden aktarır."""
+        src = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query)).get("src", "")
+        if not STREAM_RE.match(src) or self.headers.get("Upgrade", "").lower() != "websocket":
+            return self._json(HTTPStatus.BAD_REQUEST, {"error": "Geçersiz akış"})
+        api = urllib.parse.urlsplit(GO2RTC_API)
+        try:
+            up = socket.create_connection((api.hostname, api.port or 80), timeout=5)
+        except OSError as e:
+            return self._json(HTTPStatus.BAD_GATEWAY, {"error": f"go2rtc'ye ulaşılamadı: {e}"})
+        lines = [f"GET /api/ws?src={urllib.parse.quote(src)} HTTP/1.1", f"Host: {api.netloc}"]
+        for k in ("Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Extensions"):
+            if v := self.headers.get(k):
+                lines.append(f"{k}: {v}")
+        up.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
+        # İstemci 101 yanıtını görmeden çerçeve gönderemez, rfile tamponu boştur; ham soketler doğrudan bağlanır.
+        client = self.connection
+        up.settimeout(None)
+        client.settimeout(None)
+
+        def pump(a, b):
+            try:
+                while data := a.recv(65536):
+                    b.sendall(data)
+            except OSError:
+                pass
+            finally:
+                for s in (a, b):
+                    try:
+                        s.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+
+        t = threading.Thread(target=pump, args=(up, client), daemon=True)
+        t.start()
+        pump(client, up)
+        t.join()
+        up.close()
+        self.close_connection = True
+
     def _https_redirect(self):
         """Ağdan düz HTTP ile gelenleri HTTPS'e yönlendirir (kiosk localhost'tan geldiği için etkilenmez)."""
         if not self.server.redirect_https or self._local() or self.path == "/ca.crt":
@@ -806,6 +960,12 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/"):
                 return self._json(HTTPStatus.UNAUTHORIZED, {"error": "Oturum açın"})
             return self._redirect("/login?" + urllib.parse.urlencode({"next": path}))
+        if method == "GET" and path == "/api/ws":
+            return self._ws_proxy()
+        if method == "GET" and (m := re.fullmatch(r"/api/playback/(b\w+)/(\d+)", path)):
+            return self._playback(m[1], int(m[2]))
+        if method == "GET" and (m := re.fullmatch(r"/api/exports/(\w+)/file", path)):
+            return self._export_file(m[1])
         if method == "POST" and path == "/api/logo":
             length = int(self.headers.get("Content-Length") or 0)
             if length > LOGO_MAX_BYTES:
@@ -827,7 +987,8 @@ class Handler(BaseHTTPRequestHandler):
         else:
             return self._json(HTTPStatus.NOT_FOUND, {"error": "Bulunamadı"})
         try:
-            body = {}
+            # GET'te sorgu parametreleri gövde yerine geçer
+            body = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query)) if method == "GET" else {}
             length = int(self.headers.get("Content-Length") or 0)
             if length:
                 body = json.loads(self.rfile.read(length) or b"{}")
@@ -857,6 +1018,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global exports
+    exports = kayit.Exports(DATA / "exports")
     with store.lock:
         write_go2rtc_yaml(desired_streams(), store.data["settings"])
     threading.Thread(target=sync_worker, daemon=True).start()

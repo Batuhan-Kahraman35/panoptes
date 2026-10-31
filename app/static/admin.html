@@ -28,6 +28,23 @@
                   background: repeating-conic-gradient(var(--line) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
   .logo-preview img { max-width: 90%; max-height: 80%; object-fit: contain; }
   input[type=range] { padding: 0; }
+  .timeline { position: relative; height: 34px; margin-top: 16px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; overflow: hidden; }
+  .tl-spans > div { position: absolute; top: 0; bottom: 0; background: var(--ok); opacity: .55; }
+  .tl-range { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .3; pointer-events: none; }
+  .tl-head { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--bad); pointer-events: none; }
+  .tl-hover { position: absolute; top: 2px; padding: 0 6px; font-size: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; pointer-events: none; transform: translateX(-50%); }
+  .tl-hours { position: relative; height: 18px; font-size: 11px; color: var(--muted); }
+  .tl-hours span { position: absolute; transform: translateX(-50%); }
+  .player { position: relative; margin-top: 8px; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 9; max-height: 70vh; }
+  .player video { width: 100%; height: 100%; display: block; }
+  .player-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #aaa; text-align: center; padding: 16px; }
+  .player-msg[hidden] { display: none; }
+  .player-bar { margin-top: 10px; }
+  .clock { font-variant-numeric: tabular-nums; font-size: 15px; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  .progress > div { height: 100%; background: var(--accent); transition: width .5s; }
+  code.hash { font-size: 11px; word-break: break-all; }
   nav { display: flex; gap: 4px; }
   nav button { background: none; border: 0; padding: 8px 12px; border-radius: 6px; color: var(--muted); font: inherit; cursor: pointer; }
   nav button.active { background: var(--chip); color: var(--text); font-weight: 600; }
@@ -118,6 +135,7 @@
   <nav>
     <button data-tab="branches" class="active">Şubeler</button>
     <button data-tab="lists">Ekran Listeleri</button>
+    <button data-tab="recordings">Kayıtlar</button>
     <button data-tab="alarms">Alarmlar <span class="badge bad" id="alarm-count" hidden></span></button>
     <button data-tab="settings">Ayarlar</button>
   </nav>
@@ -145,6 +163,53 @@
         <p class="muted" style="font-size:12px">Aktif listeler ekranda sırayla, Ayarlar'daki süreyle döner.</p>
       </div>
       <div id="list-editor"></div>
+    </div>
+  </section>
+
+  <section id="tab-recordings" hidden>
+    <div class="section">
+      <div class="inline">
+        <label class="field"><span>Şube</span><select id="rec-branch"></select></label>
+        <label class="field"><span>Kamera</span><select id="rec-channel"></select></label>
+        <label class="field"><span>Tarih</span><input type="date" id="rec-date"></label>
+        <span class="muted" id="rec-status"></span>
+      </div>
+      <div class="timeline" id="rec-timeline" title="Oynatmak için tıklayın">
+        <div class="tl-spans" id="rec-spans"></div>
+        <div class="tl-range" id="rec-range" hidden></div>
+        <div class="tl-head" id="rec-head" hidden></div>
+        <div class="tl-hover" id="rec-hover" hidden></div>
+      </div>
+      <div class="tl-hours"><span style="left:0.0000%">00</span><span style="left:12.5000%">03</span><span style="left:25.0000%">06</span><span style="left:37.5000%">09</span><span style="left:50.0000%">12</span><span style="left:62.5000%">15</span><span style="left:75.0000%">18</span><span style="left:87.5000%">21</span><span style="left:100.0000%">24</span></div>
+      <div class="player">
+        <video id="rec-video" playsinline muted></video>
+        <div class="player-msg" id="rec-msg">Zaman çizelgesinde yeşil bir alana tıklayın.</div>
+      </div>
+      <div class="inline player-bar">
+        <button id="rec-play" disabled>⏸ Duraklat</button>
+        <span class="chips" id="rec-speed" style="margin:0"></span>
+        <b class="clock" id="rec-clock">--:--:--</b>
+        <span class="spacer" style="flex:1"></span>
+        <label class="field"><span>Saate git</span><input type="time" step="1" id="rec-goto"></label>
+        <button id="rec-goto-btn">Git</button>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:16px">
+      <h2 style="margin-bottom:12px">Dışa aktar</h2>
+      <div class="inline">
+        <label class="field"><span>Başlangıç</span><input type="time" step="1" id="exp-start"></label>
+        <button id="exp-mark-start" title="Oynatılan anı başlangıç yap">⟦ Şu an</button>
+        <label class="field"><span>Bitiş</span><input type="time" step="1" id="exp-end"></label>
+        <button id="exp-mark-end" title="Oynatılan anı bitiş yap">Şu an ⟧</button>
+        <label class="field"><span>Biçim</span><select id="exp-format">
+          <option value="h264">MP4 · H.264 (her yerde oynar)</option>
+          <option value="orijinal">MP4 · Orijinal H.265 (daha hızlı)</option>
+        </select></label>
+        <button class="primary" id="exp-go">Dışa aktar</button>
+      </div>
+      <p class="muted">Seçili şube, kamera ve tarih için. En fazla 2 saat. Dosyalar cihazda 24 saat saklanır; SHA-256 değeri delil teslimi için gösterilir.</p>
+      <div class="cards" id="exp-jobs"></div>
     </div>
   </section>
 
@@ -235,5 +300,6 @@
 <div class="toast" id="toast"></div>
 
 <script src="/static/admin.js"></script>
+<script src="/static/kayitlar.js"></script>
 </body>
 </html>
